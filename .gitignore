@@ -1,0 +1,14 @@
+logs/
+target/
+.idea/
+/.idea_modules
+/.classpath
+/.project
+/.settings
+/RUNNING_PID
+/conf/dev.conf
+/public/data_logs/*.log
+/public/node_modules/
+_*/
+public/cache/
+public/cache/projectcommits/

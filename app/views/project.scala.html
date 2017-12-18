@@ -1,0 +1,10 @@
+@(vm: ProjectViewModel)
+
+@main("projects") {
+    <div>projects</div>
+    <ul>
+    @for(name <- vm.names) {
+        <li>@name</li>
+    }
+    </ul>
+}
