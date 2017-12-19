@@ -14,6 +14,7 @@ import play.api.mvc._
 import scala.concurrent.duration._
 import scala.concurrent.{Await, Future}
 import scala.util.matching.Regex
+import scala.collection.JavaConverters._
 
 @Singleton
 class ProjectController @Inject()(cc: ControllerComponents, config: Configuration, ws: WSClient) extends AbstractController(cc) {
@@ -24,6 +25,31 @@ class ProjectController @Inject()(cc: ControllerComponents, config: Configuratio
       case (obj, (key, JsArray(arr))) if arr == null || arr.isEmpty => obj - key
       case (obj, (_, _)) => obj
     }
+  }
+
+  implicit val gNodehWrites = new Writes[GNode] {
+    def writes(n: GNode) = Json.obj(
+      "label" -> n.label,
+      "name" -> n.name
+    ).omitEmpty
+  }
+
+  implicit val gLinkWrites = new Writes[GLink] {
+    def writes(n: GLink) = Json.obj(
+      "label" -> n.label,
+      "from" -> n.from,
+      "to" -> n.to
+    ).omitEmpty
+  }
+
+  implicit val gGraphWrites = new Writes[GGraph] {
+    def writes(g: GGraph) = Json.obj(
+      "nodes" -> g.nodes,
+      "links" -> g.links
+//      "nodes" -> Json.arr(
+//        g.nodes
+//      )
+    ).omitEmpty
   }
 
   implicit val responseUserReads: Reads[ResponseUser] = (
@@ -60,6 +86,40 @@ class ProjectController @Inject()(cc: ControllerComponents, config: Configuratio
     val driver = GraphDatabase.driver("bolt://127.0.0.1:7687", AuthTokens.basic("bruno", "bruno"))
 
     val session = driver.session
+    val allJson = session.run("MATCH (u)-[r]->(p) RETURN u.username as username, type(r) as type, p.name as name")
+    var personsJson: Seq[GNode] = Seq[GNode]()
+    var projectsJson: Seq[GNode] = Seq[GNode]()
+    var linksJson: Seq[GLink] = Seq[GLink]()
+    allJson.list().asScala.foreach(r => {
+      personsJson +:= GNode("person", r.get("username").asString())
+      projectsJson +:= GNode("project", r.get("name").asString())
+      linksJson +:= GLink(r.get("type").asString(), r.get("username").asString(), r.get("name").asString())
+    })
+//    val projectsJson = allJson.list().asScala.map(r => {
+//      GNode("project", r.get("name").asString())
+//    })
+//    val linksJson = allJson.list().asScala.map(r => {
+//      GLink(r.get("type").asString())
+//    })
+
+    val graph = GGraph(
+      personsJson.groupBy(p => p.name).map(g => g._2.head).toSeq ++
+        projectsJson.groupBy(p => p.name).map(g => g._2.head).toSeq,
+      linksJson)
+
+//    Ok("ok")
+    Ok(Json.prettyPrint(Json.toJson(graph))).as(ContentTypes.JSON)
+  }
+  }
+
+  def refresh() = Action { implicit request: Request[AnyContent] => {
+
+    //    val gitHost = config.underlying.getString("sources.git.host")
+    //    val gitToken = config.underlying.getString("sources.git.token")
+
+    val driver = GraphDatabase.driver("bolt://127.0.0.1:7687", AuthTokens.basic("bruno", "bruno"))
+
+    val session = driver.session
     session.run("MATCH (n) DETACH DELETE n")
     val usersJson = getGitUsers
     val pvm = ProjectViewModel(usersJson.map(u => u.name))
@@ -76,9 +136,9 @@ class ProjectController @Inject()(cc: ControllerComponents, config: Configuratio
       userProjectJson
         .foreach(p => session.run(
           s"""MATCH (p:Project) WHERE p.uid = "${p.id}"
-           |MATCH (u:Person) WHERE u.uid = "${u.id}"
-           |CREATE (u)-[:owns]->(p)
-          """.stripMargin)
+             |MATCH (u:Person) WHERE u.uid = "${u.id}"
+             |CREATE (u)-[:owns]->(p)
+          """.stripMargin))
     })
 
     projectsJson.foreach(p => {
@@ -91,8 +151,8 @@ class ProjectController @Inject()(cc: ControllerComponents, config: Configuratio
           println(s"match project ${p.id} with user $author_name")
           val query =
             s"""MATCH (p:Project) WHERE p.uid = "${p.id}"
-           |MATCH (u:Person) WHERE u.username = "$author_name"
-           |CREATE (u)-[:commit]->(p)
+               |MATCH (u:Person) WHERE u.username = "$author_name"
+               |CREATE (u)-[:commit]->(p)
           """.stripMargin
           println(query)
           session.run(query)
@@ -232,3 +292,6 @@ case class ResponseUserProject(id: Int, name: String)
 
 case class ResponseProjectCommit(id: String, author_name: String, author_email: String)
 
+case class GGraph(nodes: Seq[GNode], links: Seq[GLink])
+case class GNode(label: String, name: String)
+case class GLink(label: String, from: String, to: String)
